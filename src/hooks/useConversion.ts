@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@clerk/clerk-react";
 import { ExportFormat } from "@/components/FormatSelector";
 import { ConversionStep } from "@/components/ConversionProgress";
 
@@ -18,6 +18,7 @@ interface ConversionError {
 }
 
 export function useConversion() {
+  const { getToken, isSignedIn } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [step, setStep] = useState<ConversionStep>("uploading");
   const [progress, setProgress] = useState(0);
@@ -48,11 +49,13 @@ export function useConversion() {
         setProgress(30);
         setStep("extracting");
 
-        // Get auth token if logged in
-        const { data: { session } } = await supabase.auth.getSession();
+        // Get Clerk auth token if logged in
         const headers: Record<string, string> = {};
-        if (session?.access_token) {
-          headers["Authorization"] = `Bearer ${session.access_token}`;
+        if (isSignedIn) {
+          const token = await getToken();
+          if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+          }
         }
 
         setProgress(40);
@@ -116,7 +119,7 @@ export function useConversion() {
         setIsProcessing(false);
       }
     },
-    []
+    [getToken, isSignedIn]
   );
 
   const reset = useCallback(() => {

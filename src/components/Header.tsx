@@ -1,13 +1,14 @@
 import { Link } from "react-router-dom";
-import { FileText, User } from "lucide-react";
+import { FileText } from "lucide-react";
+import {
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  UserButton,
+} from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 
-interface HeaderProps {
-  isLoggedIn?: boolean;
-  onAuthClick?: () => void;
-}
-
-export function Header({ isLoggedIn, onAuthClick }: HeaderProps) {
+export function Header() {
   return (
     <header className="w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
@@ -27,10 +28,25 @@ export function Header({ isLoggedIn, onAuthClick }: HeaderProps) {
           >
             Privacy Policy
           </Link>
-          <Button variant="outline" size="sm" onClick={onAuthClick}>
-            <User className="w-4 h-4 mr-2" />
-            {isLoggedIn ? "Account" : "Sign In"}
-          </Button>
+          
+          <SignedOut>
+            <SignInButton mode="modal">
+              <Button variant="outline" size="sm">
+                Sign In
+              </Button>
+            </SignInButton>
+          </SignedOut>
+          
+          <SignedIn>
+            <UserButton 
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: "w-8 h-8"
+                }
+              }}
+            />
+          </SignedIn>
         </nav>
       </div>
     </header>

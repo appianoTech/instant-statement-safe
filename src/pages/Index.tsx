@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Hero } from "@/components/Hero";
@@ -12,7 +11,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useConversion } from "@/hooks/useConversion";
 
 export default function Index() {
-  const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>("xlsx");
   const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
@@ -76,13 +74,9 @@ export default function Index() {
     }, 1000);
   }, [downloadBlob, selectedFile, selectedFormat, toast, handleClear]);
 
-  const handleAuthClick = useCallback(() => {
-    navigate("/auth");
-  }, [navigate]);
-
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      <Header onAuthClick={handleAuthClick} />
+      <Header />
 
       <main className="flex-1 container mx-auto px-4 py-12">
         <Hero />
