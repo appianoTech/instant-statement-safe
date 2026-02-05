@@ -17,7 +17,7 @@ export function Header() {
             <FileText className="w-5 h-5 text-primary-foreground" />
           </div>
           <span className="font-semibold text-lg text-foreground">
-            Bank Statement Converter
+            BSTATEMENTCONVERTER
           </span>
         </Link>
 

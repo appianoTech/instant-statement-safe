@@ -28,6 +28,10 @@ export default function Auth() {
             elements: {
               rootBox: "mx-auto",
               card: "shadow-lg",
+              footer: "hidden",
+              footerAction: "hidden",
+              badge: "hidden",
+              dividerRow: "hidden",
             }
           }}
         />
