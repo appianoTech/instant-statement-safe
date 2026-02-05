@@ -6,17 +6,51 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// In-memory rate limiting (resets on function cold start)
+const usageMap = new Map<string, { count: number; resetTime: number }>();
+
 // Rate limits
 const ANONYMOUS_DAILY_LIMIT = 3;
 const AUTHENTICATED_DAILY_LIMIT = 20;
+const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-// Hash function for IP anonymization
-async function hashIdentifier(identifier: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(identifier + Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.slice(0, 10));
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+// Simple hash for identifier
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+// Check and increment in-memory usage
+function checkAndIncrementUsage(identifier: string, limit: number): { allowed: boolean; remaining: number } {
+  const now = Date.now();
+  const existing = usageMap.get(identifier);
+  
+  // Clean up expired entries periodically
+  if (usageMap.size > 10000) {
+    for (const [key, value] of usageMap.entries()) {
+      if (now > value.resetTime) {
+        usageMap.delete(key);
+      }
+    }
+  }
+  
+  if (!existing || now > existing.resetTime) {
+    // New or expired entry
+    usageMap.set(identifier, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    return { allowed: true, remaining: limit - 1 };
+  }
+  
+  if (existing.count >= limit) {
+    return { allowed: false, remaining: 0 };
+  }
+  
+  existing.count++;
+  return { allowed: true, remaining: limit - existing.count };
 }
 
 // Extract transactions using Lovable AI
@@ -96,7 +130,6 @@ Example output format:
   
   // Parse the JSON response
   try {
-    // Clean up the response - remove markdown code blocks if present
     let cleanContent = content.trim();
     if (cleanContent.startsWith("```json")) {
       cleanContent = cleanContent.slice(7);
@@ -143,10 +176,8 @@ function generateJSON(transactions: any[]): string {
   return JSON.stringify(transactions, null, 2);
 }
 
-// Generate XLSX from transactions (simplified - creates CSV that Excel can open)
-// Note: For true XLSX, you'd use a library like xlsx, but for MVP this works
+// Generate XLSX from transactions (tab-separated for Excel)
 function generateXLSX(transactions: any[]): string {
-  // For MVP, we generate a tab-separated format that Excel opens well
   const headers = ["Date", "Description", "Debit", "Credit", "Balance"];
   const rows = transactions.map((t) => [
     t.date || "",
@@ -167,9 +198,8 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    
     // Get client IP for rate limiting
     const clientIP = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || 
                      req.headers.get("cf-connecting-ip") || 
@@ -182,40 +212,29 @@ serve(async (req) => {
     
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7);
-      const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (!error && user) {
-        userId = user.id;
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader } }
+      });
+      const { data, error } = await supabase.auth.getUser(token);
+      if (!error && data.user) {
+        userId = data.user.id;
         dailyLimit = AUTHENTICATED_DAILY_LIMIT;
       }
     }
 
-    // Create identifier hash (privacy: we hash the IP, never store it raw)
-    const identifierHash = await hashIdentifier(userId || clientIP);
-    const identifierType = userId ? "user" : "ip";
-
-    // Check rate limit
-    const { data: remaining, error: rateError } = await supabase.rpc(
-      "check_and_increment_usage",
-      {
-        p_identifier_hash: identifierHash,
-        p_identifier_type: identifierType,
-        p_user_id: userId,
-        p_daily_limit: dailyLimit,
-      }
-    );
-
-    if (rateError) {
-      console.error("Rate limit check error:", rateError);
-      throw new Error("Failed to check rate limit");
-    }
-
-    if (remaining === -1) {
+    // Create identifier for rate limiting (hash for privacy)
+    const identifier = simpleHash(userId || clientIP);
+    
+    // Check in-memory rate limit
+    const { allowed, remaining } = checkAndIncrementUsage(identifier, dailyLimit);
+    
+    if (!allowed) {
       return new Response(
         JSON.stringify({
           error: "Rate limit exceeded",
           message: userId 
-            ? `You've used all ${dailyLimit} conversions for today. Try again tomorrow.`
-            : `You've used all ${dailyLimit} free conversions for today. Sign in for more, or try again tomorrow.`,
+            ? `You've used all ${dailyLimit} conversions for today. Try again later.`
+            : `You've used all ${dailyLimit} free conversions. Sign in for more, or try again later.`,
           remaining: 0,
           limit: dailyLimit,
         }),
@@ -330,7 +349,6 @@ serve(async (req) => {
     
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     
-    // Handle specific error types
     if (errorMessage.startsWith("RATE_LIMIT:")) {
       return new Response(
         JSON.stringify({ error: "Rate limited", message: errorMessage.replace("RATE_LIMIT: ", "") }),
